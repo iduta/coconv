@@ -263,7 +263,3 @@ def resnet152(pretrained=False, **kwargs):
         model.load_state_dict(torch.load(download_from_url(model_urls['resnet152'],
                                                            root=default_cache_path)))
     return model
-
-
-m = resnet50(pretrained=True)
-print(m)

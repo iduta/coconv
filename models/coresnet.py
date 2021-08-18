@@ -1,7 +1,25 @@
 import torch
 import torch.nn as nn
-import torch.utils.model_zoo as model_zoo
+import os
+from div.download_from_url import download_from_url
 
+try:
+    from torch.hub import _get_torch_home
+    torch_cache_home = _get_torch_home()
+except ImportError:
+    torch_cache_home = os.path.expanduser(
+        os.getenv('TORCH_HOME', os.path.join(
+            os.getenv('XDG_CACHE_HOME', '~/.cache'), 'torch')))
+default_cache_path = os.path.join(torch_cache_home, 'pretrained')
+
+__all__ = ['CoResNet', 'coresnet50', 'coresnet101', 'coresnet152']
+
+
+model_urls = {
+    'coresnet50': 'https://drive.google.com/uc?export=download&id=1fnANwWhU6SjRpPLSHIji-nLNhdVdtBSs',
+    'coresnet101': 'https://drive.google.com/uc?export=download&id=10-oJYZtPrlnM4H9aKxvI-Osjhjm5B1WL',
+    'coresnet152': 'https://drive.google.com/uc?export=download&id=1dzo1gd7l6_T57wWcfyxSddGlec1foClD',
+}
 
 
 def conv3x3(in_planes, out_planes, stride=1, padding=1, dilation=1, groups=1):
@@ -14,6 +32,49 @@ def conv1x1(in_planes, out_planes, stride=1):
     """1x1 convolution"""
     return nn.Conv2d(in_planes, out_planes, kernel_size=1, stride=stride, bias=False)
 
+
+class CoConv3x3_2d(nn.Module):
+    """CoConv3x3_2d with padding (general case). Applies a 2D CoConv over an input signal composed of several input planes.
+
+    Args:
+        in_channels (int): Number of channels in the input image
+        out_channels (list): Number of channels for each pyramid level produced by the convolution
+        coconv_dilations (list): The dilation of the kernel for each pyramid level
+        stride (int or tuple, optional): Stride of the convolution. Default: 1
+        bias (bool, optional): If ``True``, adds a learnable bias to the output. Default: ``False``
+        groups (int): Number of groups to split the input channels. Default: 1
+
+    Example::
+
+        >>> # CoConv with two pyramid levels, dilations: 1, 2
+        >>> m = CoConv3x3_2d(in_channels=64, out_channels=[32, 32], coconv_dilations=[1, 2])
+        >>> input = torch.randn(4, 64, 56, 56)
+        >>> output = m(input)
+
+        >>> # CoConv with three pyramid levels, kernels: 1, 2, 3
+        >>> m = CoConv3x3_2d(in_channels=64, out_channels=[32, 16, 16], coconv_dilations=[1, 2, 3])
+        >>> input = torch.randn(4, 64, 56, 56)
+        >>> output = m(input)
+    """
+    def __init__(self, in_channels, out_channels, coconv_dilations, stride=1, bias=False, groups=1):
+        super(CoConv3x3_2d, self).__init__()
+        assert len(out_channels) == len(coconv_dilations)
+        kernel_size = 3
+
+        self.coconv_levels = [None] * len(coconv_dilations)
+        for i in range(len(coconv_dilations)):
+
+            self.coconv_levels[i] = nn.Conv2d(in_channels, out_channels[i], kernel_size=kernel_size,
+                                              stride=stride, padding=kernel_size // 2 + (coconv_dilations[i] - 1),
+                                              dilation=coconv_dilations[i], bias=bias, groups=groups)
+        self.coconv_levels = nn.ModuleList(self.coconv_levels)
+
+    def forward(self, x):
+        out = []
+        for level in self.coconv_levels:
+            out.append(level(x))
+
+        return torch.cat(out, 1)
 
 class CoConv5(nn.Module):
 
@@ -150,7 +211,6 @@ class Bottleneck(nn.Module):
 
         out = self.conv3(out)
         if not self.bn_end_stage:
-            #print("BN before addition")
             out = self.bn3(out)
 
         if self.downsample is not None:
@@ -260,12 +320,14 @@ class CoResNet(nn.Module):
         return x
 
 
-
-
 def coresnet50(pretrained=False, **kwargs):
     """Constructs a CoResNet-50 model.
     """
     model = CoResNet(Bottleneck, [3, 4, 6, 3], **kwargs)
+    if pretrained:
+        os.makedirs(default_cache_path, exist_ok=True)
+        model.load_state_dict(torch.load(download_from_url(model_urls['coresnet50'],
+                                                           root=default_cache_path)))
     
     return model
 
@@ -274,6 +336,10 @@ def coresnet101(pretrained=False, **kwargs):
     """Constructs a CoResNet-101 model.
     """
     model = CoResNet(Bottleneck, [3, 4, 23, 3], **kwargs)
+    if pretrained:
+        os.makedirs(default_cache_path, exist_ok=True)
+        model.load_state_dict(torch.load(download_from_url(model_urls['coresnet101'],
+                                                           root=default_cache_path)))
     
     return model
 
@@ -282,5 +348,9 @@ def coresnet152(pretrained=False, **kwargs):
     """Constructs a CoResNet-152 model.
     """
     model = CoResNet(Bottleneck, [3, 8, 36, 3], **kwargs)
+    if pretrained:
+        os.makedirs(default_cache_path, exist_ok=True)
+        model.load_state_dict(torch.load(download_from_url(model_urls['coresnet152'],
+                                                           root=default_cache_path)))
     
     return model
